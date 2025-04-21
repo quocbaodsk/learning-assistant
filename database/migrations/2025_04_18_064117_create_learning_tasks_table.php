@@ -19,6 +19,7 @@ return new class extends Migration {
             $table->string('resource');
             $table->string('type'); // Video, Article, ...
             $table->string('focus'); // Primary Skill: X
+            $table->text('theory')->nullable();
             $table->boolean('is_done')->default(false); // ✅ người dùng tick hoàn thành
             $table->timestamps();
         });

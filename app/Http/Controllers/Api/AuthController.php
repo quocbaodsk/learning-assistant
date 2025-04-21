@@ -32,12 +32,16 @@ class AuthController extends Controller
             ]);
         }
 
-        $device = $request->device_name ?? $request->userAgent() ?? 'API Token';
-        $token  = $user->createToken($device)->plainTextToken;
+        $device      = $request->device_name ?? $request->userAgent() ?? 'API Token';
+        $accessToken = explode('|', $user->createToken($device)->plainTextToken)[1];
 
         return response()->json([
-            'user'  => $user,
-            'token' => $token,
+            'data'    => [
+                'user'  => $user,
+                'token' => $accessToken,
+            ],
+            'status'  => 200,
+            'message' => 'Login successful',
         ]);
     }
 
@@ -47,26 +51,39 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
+            'bio'         => 'nullable|string|max:255',
+            'age'         => 'required|integer|min:1|max:120',
             'name'        => 'required|string|max:255',
             'email'       => 'required|string|email|max:255|unique:users',
+            'gender'      => 'required|string|in:male,female,other',
+            'language'    => 'required|string|max:3',
             'password'    => ['required', 'confirmed', Password::defaults()],
             'device_name' => 'nullable|string',
         ]);
 
         $user = User::create([
+            'bio'      => $request->bio,
+            'age'      => $request->age,
             'name'     => $request->name,
             'email'    => $request->email,
+            'gender'   => $request->gender,
+            'language' => $request->language ?? 'en',
             'password' => Hash::make($request->password),
         ]);
 
         event(new Registered($user));
 
         $device = $request->device_name ?? $request->userAgent() ?? 'API Token';
-        $token  = $user->createToken($device)->plainTextToken;
+
+        $accessToken = explode('|', $user->createToken($device)->plainTextToken)[1];
 
         return response()->json([
-            'user'  => $user,
-            'token' => $token,
+            'data'    => [
+                'user'  => $user,
+                'token' => $accessToken,
+            ],
+            'status'  => 201,
+            'message' => 'Registration successful',
         ], 201);
     }
 

@@ -25,8 +25,8 @@ Route::middleware('auth:sanctum')->prefix('learning')->group(function () {
     Route::delete('/profiles/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'deleteProfile']);
 
     // Generate tuần mới
-    Route::post('/generate/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'generateWeek']);
-    Route::post('/generate-next/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'generateNextWeekFromPrevious']);
+    Route::post('/generate', [App\Http\Controllers\Api\LearningPlanController::class, 'generateWeek']);
+    Route::post('/generate-next', [App\Http\Controllers\Api\LearningPlanController::class, 'generateNextWeekFromPrevious']);
 
     // Check
     Route::get('/check-ready/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'checkReadyToGenerate']);
@@ -47,4 +47,8 @@ Route::middleware('auth:sanctum')->prefix('learning')->group(function () {
     Route::get('/weeks/{weekId}/export', [App\Http\Controllers\Api\LearningPlanController::class, 'exportWeekPdf']);
     Route::get('/weeks/{weekId}/email', [App\Http\Controllers\Api\LearningPlanController::class, 'emailWeekPdf']);
     Route::get('/prompt/suggest/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'suggestNextWeekPrompt']);
+
+    //
+    Route::patch('/exercise/submit', [App\Http\Controllers\Api\ExerciseSubmitController::class, 'submit']);
+
 });

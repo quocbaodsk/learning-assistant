@@ -28,4 +28,10 @@ class LearningTask extends Model
     {
         return $this->belongsTo(LearningWeek::class, 'learning_week_id');
     }
+
+    public function exercises()
+    {
+        return $this->hasMany(LearningTaskExercise::class);
+    }
+
 }

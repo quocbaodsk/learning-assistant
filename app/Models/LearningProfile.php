@@ -15,6 +15,7 @@ class LearningProfile extends Model
         'skill_level',
         'secondary_skills',
         'goals',
+        'interests',
         'learning_style',
         'daily_learning_time',
         'preferred_resources',
@@ -22,6 +23,7 @@ class LearningProfile extends Model
     ];
 
     protected $casts = [
+        'interests'           => 'array',
         'secondary_skills'    => 'array',
         'preferred_resources' => 'array',
     ];
