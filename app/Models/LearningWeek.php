@@ -15,11 +15,16 @@ class LearningWeek extends Model
         'notes',
         'start_date',
         'is_active',
+        'user_id',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'is_active'  => 'boolean',
+    ];
+
+    protected $appends = [
+        'is_ready',
     ];
 
     public function profile()
@@ -31,4 +36,18 @@ class LearningWeek extends Model
     {
         return $this->hasMany(LearningTask::class);
     }
+
+    public function getIsReadyAttribute()
+    {
+        $status = LearningTask::where('learning_week_id', $this->id)
+            ->where('is_done', false)
+            ->exists();
+
+        if ($status !== $this->is_active) {
+            $this->update(['is_active' => $status]);
+        }
+
+        return !$status;
+    }
+
 }

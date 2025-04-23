@@ -23,6 +23,9 @@ return new class extends Migration {
             $table->tinyInteger('difficulty')->default(1);
             $table->integer('score')->default(1);
 
+            $table->dateTime('end_time')->nullable(); // Thời gian kết thúc
+            $table->dateTime('start_time')->nullable(); // Thời gian bắt đầu
+
             $table->integer('user_score')->default(0); // Điểm của người học
             $table->text('ai_feedback')->nullable(); // Phản hồi từ AI
             $table->boolean('is_correct')->default(false); // Đánh dấu đã trả lời đúng
@@ -30,11 +33,11 @@ return new class extends Migration {
             $table->text('ai_evaluation')->nullable(); // Đánh giá của AI
             $table->text('ai_explanation')->nullable(); // Giải thích của AI
 
+            $table->integer('user_id')->unsigned();
 
 
             $table->timestamps();
         });
-
     }
 
     /**

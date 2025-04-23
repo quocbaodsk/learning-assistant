@@ -11,6 +11,7 @@ class LearningProfile extends Model
 
     protected $fillable = [
         'user_id',
+        'course_name',
         'primary_skill',
         'skill_level',
         'secondary_skills',
@@ -26,6 +27,10 @@ class LearningProfile extends Model
         'interests'           => 'array',
         'secondary_skills'    => 'array',
         'preferred_resources' => 'array',
+    ];
+
+    protected $hidden = [
+        'custom_ai_prompt',
     ];
 
     public function user()

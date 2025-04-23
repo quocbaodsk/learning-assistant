@@ -17,6 +17,7 @@ return new class extends Migration {
             $table->text('notes')->nullable(); // AI note khuyến nghị
             $table->date('start_date'); // đầu tuần
             $table->boolean('is_active')->default(true);
+            $table->integer('user_id')->unsigned();
             $table->timestamps();
         });
     }

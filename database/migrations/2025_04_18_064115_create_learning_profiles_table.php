@@ -13,6 +13,7 @@ return new class extends Migration {
         Schema::create('learning_profiles', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->string('course_name')->nullable(); // e.g., "Web Development"
             $table->json('interests')->nullable();
             $table->string('primary_skill');
             $table->unsignedTinyInteger('skill_level'); // 0–100

@@ -5,7 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
-use App\Models\{LearningProfile, LearningWeek, LearningTask};
+use App\Models\{LearningProfile, LearningWeek, LearningTask, User};
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -17,7 +18,7 @@ class LearningPlanController extends Controller
     public function getProfiles(Request $request)
     {
         return response()->json([
-            'data'    => LearningProfile::where('user_id', $request->user()->id)->get(),
+            'data'    => LearningProfile::where('user_id', Auth::id())->get(),
             'status'  => 200,
             'message' => 'Lấy danh sách profile thành công',
         ]);
@@ -27,6 +28,7 @@ class LearningPlanController extends Controller
     public function createProfile(Request $request)
     {
         $validated = $request->validate([
+            'course_name'         => 'required|string|max:255',
             'primary_skill'       => 'required|string',
             'skill_level'         => 'required|integer|min:0|max:100',
             'secondary_skills'    => 'array',
@@ -38,15 +40,16 @@ class LearningPlanController extends Controller
             'custom_ai_prompt'    => 'nullable|string',
         ]);
 
-        $validated['user_id'] = $request->user()->id;
-        $profile              = LearningProfile::create($validated);
+        $validated['user_id'] = Auth::id();
+
+        $profile = LearningProfile::create($validated);
 
         return response()->json(['data' => $profile, 'status' => 201, 'message' => 'Tạo hồ sơ mới thành công, tiếp tục tạo kế hoạch tuần học mới nhé!'], 201);
     }
 
     public function deleteProfile(Request $request, $profileId)
     {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($profileId);
+        $profile = LearningProfile::where('user_id', Auth::id())->find($profileId);
 
         if (!$profile) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);
@@ -66,10 +69,11 @@ class LearningPlanController extends Controller
     public function generateWeek(Request $request)
     {
         $payload = $request->validate([
-            'id' => 'required|integer|exists:learning_profiles,id',
+            'profile_id' => 'required|integer|exists:learning_profiles,id',
         ]);
 
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($payload['id']);
+        $user    = User::findOrFail(Auth::id());
+        $profile = LearningProfile::where('user_id', Auth::id())->find($payload['profile_id']);
 
         if (!$profile) {
             return response()->json(['status' => 422, 'message' => 'Không tìm thấy hồ sơ này'], 422);
@@ -100,9 +104,12 @@ class LearningPlanController extends Controller
             $lastWeek->update(['is_active' => false]);
         }
 
-        $prompt = $this->buildUserPrompt($profile);
+        $content = file_get_contents(storage_path('app/prompts/learning-plan.txt'));
+        $prompt  = $this->buildUserPrompt($profile);
 
-        $response = Http::timeout(120)->withToken(config('services.openai.key'))
+        $content = str_replace('{{USER_PROFILE}}', $prompt, $content);
+
+        $response = Http::timeout(0)->withToken(config('services.openai.key'))
             ->post(config('services.openai.url'), [
                 'top_p'       => 1,
                 'model'       => config('services.openai.model'),
@@ -110,29 +117,27 @@ class LearningPlanController extends Controller
                 'messages'    => [
                     [
                         'role'    => 'system',
-                        'content' => file_get_contents(storage_path('app/prompts/learning-plan.txt')),
+                        'content' => $content,
                     ],
-                    [
-                        'role'    => 'user',
-                        'content' => $prompt,
-                    ],
-                    // required to avoid timeout
+                    // [
+                    //     'role'    => 'user',
+                    //     'content' => $prompt,
+                    // ],
                     [
                         'role'    => 'user',
                         'content' => "Hãy tạo một kế hoạch học tập cho tuần này, bao gồm các nhiệm vụ hàng ngày, thời gian dự kiến và tài liệu tham khảo. Đảm bảo rằng kế hoạch này phù hợp với trình độ kỹ năng và mục tiêu học tập của người dùng.",
                     ],
-                    // required by lang of user
-                    [
-                        'role'    => 'user',
-                        'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho kế hoạch này.",
-                    ],
+                    // [
+                    //     'role'    => 'user',
+                    //     'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho kế hoạch này.",
+                    // ],
                 ],
             ]);
 
         if (!$response->successful()) {
             return response()->json([
                 'data'    => [
-                    'error' => $response->json('error.message'),
+                    'error' => $response->json(),
                 ],
                 'status'  => 400,
                 'message' => 'Có lỗi xảy ra khi thực hiện tạo kế hoạch, vui lòng thử lại.',
@@ -157,6 +162,7 @@ class LearningPlanController extends Controller
         $week = $profile->weeks()->create([
             'notes'      => $parsed['notes'] ?? null,
             'summary'    => $parsed['user']['summary'] ?? '',
+            'user_id'    => $user->id,
             'is_active'  => true,
             'start_date' => now()->startOfWeek(),
         ]);
@@ -172,6 +178,7 @@ class LearningPlanController extends Controller
                     'focus'    => $task['focus'],
                     'theory'   => $task['theory'] ?? null,
                     'is_done'  => false,
+                    'user_id'  => $user->id,
                 ]);
 
                 foreach ($task['exercises'] ?? [] as $ex) {
@@ -183,6 +190,7 @@ class LearningPlanController extends Controller
                         'score'        => $ex['score'] ?? 1,
                         'type'         => $ex['type'] ?? 'written',
                         'options'      => isset($ex['options']) ? json_encode($ex['options']) : null,
+                        'user_id'      => $user->id,
                         'user_answer'  => null,
                         'is_submitted' => false,
                     ]);
@@ -197,17 +205,16 @@ class LearningPlanController extends Controller
         ]);
     }
 
-
     public function generateNextWeekFromPrevious(Request $request)
     {
         $payload = $request->validate([
-            'id' => 'required|integer|exists:learning_profiles,id',
+            'profile_id' => 'required|integer|exists:learning_profiles,id',
         ]);
 
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($payload['id']);
+        $profile = LearningProfile::where('user_id', Auth::id())->find($payload['profile_id']);
 
         if (!$profile) {
-            return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);
+            return response()->json(['status' => 422, 'message' => 'Không tìm thấy hồ sơ này, vui lòng thử lại.'], 422);
         }
 
         $lastWeek = $profile->weeks()->latest('start_date')->first();
@@ -215,8 +222,8 @@ class LearningPlanController extends Controller
             return response()->json([
                 'data'    => null,
                 'status'  => 400,
-                'message' => 'Chưa có tuần học trước đó.',
-            ]);
+                'message' => 'Chưa có tuần học trước đó, vui lòng tạo lại tuần học.',
+            ], 400);
         }
 
         if ($lastWeek->is_active || $lastWeek->tasks()->where('is_done', false)->exists()) {
@@ -224,28 +231,56 @@ class LearningPlanController extends Controller
                 'data'    => null,
                 'status'  => 400,
                 'message' => 'Cần hoàn thành toàn bộ tuần hiện tại trước khi tạo tuần tiếp theo.',
-            ]);
-        }
-
-        $existing = $profile->weeks()
-            ->whereDate('start_date', now()->startOfWeek())
-            ->exists();
-
-        if ($existing) {
-            return response()->json([
-                'data'    => null,
-                'status'  => 409,
-                'message' => 'Tuần học hiện tại đã tồn tại.',
-            ]);
+            ], 400);
         }
 
         $lastWeek->update(['is_active' => false]);
 
-        $prompt         = $this->buildUserPrompt($profile);
-        $summary        = "Tuần trước người học đã hoàn thành toàn bộ {$lastWeek->tasks()->count()} nhiệm vụ.";
-        $enhancedPrompt = $prompt . "\n\n" . $summary . " Hãy gợi ý kế hoạch tiếp theo phù hợp, nâng độ khó vừa phải.";
+        // ✅ Lấy các bài tập đã nộp để gửi phân tích AI
+        $exercises = $profile->weeks()
+            ->with(['tasks.exercises' => fn($q) => $q->where('is_submitted', true)])
+            ->get()
+            ->flatMap(fn($w) => $w->tasks)
+            ->flatMap(fn($t) => $t->exercises)
+            ->map(fn($e) => [
+                'exercise'    => $e->exercise,
+                'user_answer' => $e->user_answer,
+                'is_correct'  => $e->is_correct,
+                'user_score'  => $e->user_score,
+                'ai_feedback' => $e->ai_feedback,
+                // 'ai_evaluation' => $e->ai_evaluation,
+                // 'ai_explanation' => $e->ai_explanation,
+                'difficulty'  => $e->difficulty,
+                'score'       => $e->score,
+            ])->values()->toArray();
 
-        $response = Http::withToken(config('services.openai.key'))
+        $analyzePrompt = [
+            [
+                'role'    => 'system',
+                'content' => file_get_contents(storage_path('app/prompts/task-exercise-summary.txt')),
+            ],
+            [
+                'role'    => 'user',
+                'content' => json_encode(['exercises' => $exercises]),
+            ],
+        ];
+
+        $summaryResponse = Http::timeout(120)->withToken(config('services.openai.key'))
+            ->post(config('services.openai.url'), [
+                'top_p'       => 1,
+                'model'       => config('services.openai.model'),
+                'temperature' => (double) config('services.openai.temperature'),
+                'messages'    => $analyzePrompt,
+            ]);
+
+        $feedback = $summaryResponse->successful()
+            ? json_decode($summaryResponse->json('choices.0.message.content'), true)
+            : null;
+
+        $enhancedPrompt = $this->buildUserPrompt($profile);
+        $enhancedPrompt .= "\n\nAnalysis Summary:\n" . json_encode($feedback);
+
+        $planResponse = Http::timeout(120)->withToken(config('services.openai.key'))
             ->post(config('services.openai.url'), [
                 'top_p'       => 1,
                 'model'       => config('services.openai.model'),
@@ -262,27 +297,26 @@ class LearningPlanController extends Controller
                 ],
             ]);
 
-        if (!$response->successful()) {
-            Log::info('Error response from OpenAI: ' . $response->body());
-
+        if (!$planResponse->successful()) {
             return response()->json([
-                'data'    => [
-                    'error' => $response->json('error.message'),
-                ],
+                'data'    => null,
                 'status'  => 500,
-                'message' => 'Có lỗi xảy ra khi thực hiện tạo kế hoạch, vui lòng thử lại.',
+                'message' => 'AI thất bại khi tạo kế hoạch.',
             ]);
         }
 
-        $data   = $response->json('choices.0.message.content');
+        $data = $planResponse->json('choices.0.message.content');
+        $data = str_replace('```json', '', $data);
+        $data = str_replace('```', '', $data);
+
         $parsed = json_decode($data, true);
 
         if (!$parsed || !isset($parsed['weeklyPlan'])) {
             return response()->json([
                 'data'    => null,
-                'status'  => 400,
-                'message' => 'Ôi không, có lỗi xảy ra khi tạo kế hoạch học tập, vui lòng thử lại.',
-            ], 400);
+                'status'  => 500,
+                'message' => 'Kết quả không hợp lệ từ AI.',
+            ]);
         }
 
         $week = $profile->weeks()->create([
@@ -323,30 +357,48 @@ class LearningPlanController extends Controller
 
         return response()->json([
             'data'    => $week,
-            'status'  => 201,
-            'message' => 'Đã tạo tuần học mới thành công, hãy tiếp tục học tập.',
-        ], 201);
+            'status'  => 200,
+            'message' => 'Tạo tuần học tiếp theo thành công từ kết quả bài tập.',
+        ]);
     }
 
 
-    // 3. Cập nhật trạng thái task (hoàn thành / chưa)
+
     public function updateTaskStatus(Request $request, $taskId)
     {
         $task = LearningTask::whereHas('week', function ($query) use ($request) {
             $query->where('is_active', true)
-                ->whereHas('profile', fn($q) => $q->where('user_id', $request->user()->id));
+                ->whereHas('profile', fn($q) => $q->where('user_id', Auth::id()));
         })->find($taskId);
 
         if (!$task) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy task này'], 400);
         }
 
-        $task->update(['is_done' => (bool) $request->input('is_done')]);
+        if ($task->is_done) {
+            return response()->json([
+                'status'  => 400,
+                'message' => 'Task này đã được đánh dấu hoàn thành rồi.',
+            ], 400);
+        }
+
+        $isDone = (bool) $request->input('is_done');
+
+        $exercises = $task->exercises()->where('is_submitted', false)->get();
+
+        if ($isDone && $exercises->isNotEmpty()) {
+            return response()->json([
+                'status'  => 400,
+                'message' => 'Bạn cần hoàn thành tất cả bài tập trước khi đánh dấu task này là hoàn thành.',
+            ], 400);
+        }
+
+        $task->update(['is_done' => $isDone, 'end_time' => now()]);
 
         return response()->json([
             'data'    => $task,
             'status'  => 200,
-            'message' => 'Cập nhật trạng thái thành công.',
+            'message' => 'Đánh dấu hoàn thành task ' . $task->id . ' thành công.',
         ]);
     }
 
@@ -362,11 +414,18 @@ class LearningPlanController extends Controller
 
         $task = LearningTask::whereHas('week', function ($q) use ($request) {
             $q->where('is_active', true)
-                ->whereHas('profile', fn($q2) => $q2->where('user_id', $request->user()->id));
+                ->whereHas('profile', fn($q2) => $q2->where('user_id', Auth::id()));
         })->find($taskId);
 
         if (!$task) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy task này'], 400);
+        }
+
+        if ($task->is_done) {
+            return response()->json([
+                'status'  => 400,
+                'message' => 'Task này đã được đánh dấu hoàn thành rồi.',
+            ], 400);
         }
 
         $task->update($validated);
@@ -380,7 +439,7 @@ class LearningPlanController extends Controller
 
     public function checkReadyToGenerate(Request $request, $profileId)
     {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->findOrFail($profileId);
+        $profile = LearningProfile::where('user_id', Auth::id())->findOrFail($profileId);
         $week    = $profile->weeks()->latest('start_date')->first();
 
         if (!$week) {
@@ -412,52 +471,9 @@ class LearningPlanController extends Controller
     }
 
     // 4. Danh sách task theo tuần hiện tại
-    public function getActiveTasks(Request $request, $profileId)
-    {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($profileId);
-
-        if (!$profile) {
-            return response()->json(['status' => 400, 'message' => 'Không tìm thấy hồ sơ này, vui lòng kiểm tra lại'], 400);
-        }
-
-
-        $week = $profile->weeks()->where('is_active', true)->latest('start_date')->first();
-
-        if (!$week) {
-            return response()->json(['status' => 400, 'message' => 'Ôi không hệ thống không tìm thấy tuần học này'], 400);
-        }
-
-        $tasks = $week->tasks()->orderBy('day')->get();
-
-        return response()->json([
-            'data'    => ['week' => $week, 'tasks' => $tasks],
-            'status'  => 200,
-            'message' => 'Lấy danh sách công việc thành công',
-        ]);
-    }
-
-    public function getTasksOfWeek(Request $request, $weekId)
-    {
-        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', $request->user()->id))
-            ->find($weekId);
-
-        if (!$week) {
-            return response()->json(['status' => 400, 'message' => 'Không tìm thấy tuần học này, vui lòng kiểm tra lại'], 400);
-        }
-
-        return response()->json([
-            'data'    => [
-                'week'  => $week,
-                'tasks' => $week->tasks()->orderBy('day')->get(),
-            ],
-            'status'  => 200,
-            'message' => 'Lấy danh sách task của tuần thành công.',
-        ]);
-    }
-
     public function getGroupedTasksOfWeek(Request $request, $weekId)
     {
-        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', $request->user()->id))
+        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', Auth::id()))
             ->with('tasks')
             ->find($weekId);
 
@@ -490,12 +506,11 @@ class LearningPlanController extends Controller
 
     public function getGroupedTasksOfActiveWeek(Request $request, $profileId)
     {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($profileId);
+        $profile = LearningProfile::where('user_id', Auth::id())->find($profileId);
 
         if (!$profile) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);
         }
-
 
         $week = $profile->weeks()->where('is_active', true)->latest('start_date')->with('tasks')->first();
 
@@ -507,6 +522,7 @@ class LearningPlanController extends Controller
             ]);
         }
 
+        $tasks   = $week->tasks;
         $grouped = $week->tasks->groupBy('day');
 
         return response()->json([
@@ -529,6 +545,7 @@ class LearningPlanController extends Controller
             "Gender: " . ($profile->user->gender ?? "Other") . "\n" .
             "Interests: " . implode(', ', $profile->interests ?? []) . "\n" .
             "Occupation: " . ($profile->user->occupation ?? '-') . "\n" .
+            "Course Name: " . ($profile->course_name ?? '-') . "\n" .
             "Primary Skill: {$profile->primary_skill}\n" .
             "Skill Level: {$profile->skill_level}\n" .
             "Secondary Skills: " . implode(', ', $profile->secondary_skills ?? []) . "\n" .
@@ -538,11 +555,14 @@ class LearningPlanController extends Controller
             "Preferred Resources: " . implode(', ', $profile->preferred_resources ?? []) . "\n";
     }
 
-    //
     // 7. Lịch sử tất cả các tuần của profile
-    public function getWeekHistory(Request $request, $profileId)
+    public function getWeekHistory(Request $request)
     {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($profileId);
+        $payload = $request->validate([
+            'profile_id' => 'required|integer|exists:learning_profiles,id',
+        ]);
+
+        $profile = LearningProfile::where('user_id', Auth::id())->find($payload['profile_id']);
 
         if (!$profile) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);
@@ -560,11 +580,15 @@ class LearningPlanController extends Controller
     }
 
     // 8. Export kế hoạch tuần thành PDF
-    public function exportWeekPdf(Request $request, $weekId)
+    public function exportWeekPdf(Request $request)
     {
-        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', $request->user()->id))
+        $payload = $request->validate([
+            'week_id' => 'required|integer|exists:learning_weeks,id',
+        ]);
+
+        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', Auth::id()))
             ->with('tasks')
-            ->find($weekId);
+            ->find($payload['week_id']);
 
         if (!$week) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy tuần học này'], 400);
@@ -576,11 +600,15 @@ class LearningPlanController extends Controller
     }
 
     // 8b. Gửi kế hoạch tuần PDF qua email
-    public function emailWeekPdf(Request $request, $weekId)
+    public function emailWeekPdf(Request $request)
     {
-        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', $request->user()->id))
+        $payload = $request->validate([
+            'week_id' => 'required|integer|exists:learning_weeks,id',
+        ]);
+
+        $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', Auth::id()))
             ->with('tasks', 'profile.user')
-            ->find($weekId);
+            ->find($payload['week_id']);
 
         if (!$week) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy tuần học này'], 400);
@@ -603,9 +631,13 @@ class LearningPlanController extends Controller
     }
 
     // 9. Gợi ý kế hoạch tuần tới dựa trên tiến độ tuần trước
-    public function suggestNextWeekPrompt(Request $request, $profileId)
+    public function suggestNextWeekPrompt(Request $request)
     {
-        $profile = LearningProfile::where('user_id', $request->user()->id)->find($profileId);
+        $payload = $request->validate([
+            'profile_id' => 'required|integer|exists:learning_profiles,id',
+        ]);
+
+        $profile = LearningProfile::where('user_id', Auth::id())->find($payload['profile_id']);
 
         if (!$profile) {
             return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);

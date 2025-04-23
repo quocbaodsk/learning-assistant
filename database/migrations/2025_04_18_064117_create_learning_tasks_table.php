@@ -20,7 +20,12 @@ return new class extends Migration {
             $table->string('type'); // Video, Article, ...
             $table->string('focus'); // Primary Skill: X
             $table->text('theory')->nullable();
+
             $table->boolean('is_done')->default(false); // ✅ người dùng tick hoàn thành
+
+            $table->integer('user_id')->unsigned();
+            $table->dateTime('expired_at')->nullable(); // Thời gian kết thúc
+
             $table->timestamps();
         });
     }

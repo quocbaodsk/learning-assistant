@@ -18,11 +18,13 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-Route::middleware('auth:sanctum')->prefix('learning')->group(function () {
+Route::middleware('auth:sanctum')->prefix('/v1')->group(function () {
     // Profile
-    Route::get('/profiles', [App\Http\Controllers\Api\LearningPlanController::class, 'getProfiles']);
-    Route::post('/profiles', [App\Http\Controllers\Api\LearningPlanController::class, 'createProfile']);
-    Route::delete('/profiles/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'deleteProfile']);
+    Route::prefix('/profiles')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\LearningPlanController::class, 'getProfiles']);
+        Route::post('/store', [App\Http\Controllers\Api\LearningPlanController::class, 'createProfile']);
+        Route::delete('/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'deleteProfile']);
+    });
 
     // Generate tuần mới
     Route::post('/generate', [App\Http\Controllers\Api\LearningPlanController::class, 'generateWeek']);
@@ -32,23 +34,26 @@ Route::middleware('auth:sanctum')->prefix('learning')->group(function () {
     Route::get('/check-ready/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'checkReadyToGenerate']);
 
     // Task
-    Route::get('/tasks/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfActiveWeek']);
-    Route::get('/tasks/of-week/{weekId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfWeek']);
+    Route::prefix('/tasks')->group(function () {
+        Route::get('/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfActiveWeek']);
+        Route::get('/of-week/{weekId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfWeek']);
 
-    Route::get('/tasks/grouped/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfActiveWeek']);
-    Route::get('/tasks/grouped/of-week/{weekId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getGroupedTasksOfWeek']);
-
-
-    Route::patch('/task/{taskId}', [App\Http\Controllers\Api\LearningPlanController::class, 'updateTaskStatus']);
-    Route::patch('/task/update/{taskId}', [App\Http\Controllers\Api\LearningPlanController::class, 'updateTaskContent']);
+        Route::patch('/{taskId}', [App\Http\Controllers\Api\LearningPlanController::class, 'updateTaskStatus']);
+        Route::patch('/update/{taskId}', [App\Http\Controllers\Api\LearningPlanController::class, 'updateTaskContent']);
+    });
 
     // Stats & Export
-    Route::get('/weeks/history/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'getWeekHistory']);
-    Route::get('/weeks/{weekId}/export', [App\Http\Controllers\Api\LearningPlanController::class, 'exportWeekPdf']);
-    Route::get('/weeks/{weekId}/email', [App\Http\Controllers\Api\LearningPlanController::class, 'emailWeekPdf']);
-    Route::get('/prompt/suggest/{profileId}', [App\Http\Controllers\Api\LearningPlanController::class, 'suggestNextWeekPrompt']);
+    Route::prefix('/stats')->group(function () {
+        Route::get('/email', [App\Http\Controllers\Api\LearningPlanController::class, 'emailWeekPdf']);
+        Route::get('/export', [App\Http\Controllers\Api\LearningPlanController::class, 'exportWeekPdf']);
+        Route::get('/history', [App\Http\Controllers\Api\LearningPlanController::class, 'getWeekHistory']);
+        Route::post('/prompt/suggest', [App\Http\Controllers\Api\LearningPlanController::class, 'suggestNextWeekPrompt']);
+    });
 
-    //
-    Route::patch('/exercise/submit', [App\Http\Controllers\Api\ExerciseSubmitController::class, 'submit']);
+    Route::prefix('/exercises')->group(function () {
+        Route::get('/{taskId}', [App\Http\Controllers\Api\ExerciseController::class, 'index'])->where('taskId', '[0-9]+');
+        Route::post('/submit', [App\Http\Controllers\Api\ExerciseController::class, 'submit']);
+        Route::post('/summary', [App\Http\Controllers\Api\ExerciseController::class, 'summary']);
+    });
 
 });

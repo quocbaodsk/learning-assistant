@@ -18,10 +18,13 @@ class LearningTask extends Model
         'type',
         'focus',
         'is_done',
+        'user_id',
+        'expired_at',
     ];
 
     protected $casts = [
-        'is_done' => 'boolean',
+        'is_done'    => 'boolean',
+        'expired_at' => 'datetime',
     ];
 
     public function week()
