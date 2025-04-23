@@ -123,22 +123,20 @@ class LearningPlanController extends Controller
                     //     'role'    => 'user',
                     //     'content' => $prompt,
                     // ],
-                    [
-                        'role'    => 'user',
-                        'content' => "Hãy tạo một kế hoạch học tập cho tuần này, bao gồm các nhiệm vụ hàng ngày, thời gian dự kiến và tài liệu tham khảo. Đảm bảo rằng kế hoạch này phù hợp với trình độ kỹ năng và mục tiêu học tập của người dùng.",
-                    ],
                     // [
                     //     'role'    => 'user',
-                    //     'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho kế hoạch này.",
+                    //     'content' => "Hãy tạo một kế hoạch học tập cho tuần này, bao gồm các nhiệm vụ hàng ngày, thời gian dự kiến và tài liệu tham khảo. Đảm bảo rằng kế hoạch này phù hợp với trình độ kỹ năng và mục tiêu học tập của người dùng.",
                     // ],
+                    [
+                        'role'    => 'user',
+                        'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho kế hoạch này.",
+                    ],
                 ],
             ]);
 
         if (!$response->successful()) {
             return response()->json([
-                'data'    => [
-                    'error' => $response->json(),
-                ],
+                'data'    => $response->json(),
                 'status'  => 400,
                 'message' => 'Có lỗi xảy ra khi thực hiện tạo kế hoạch, vui lòng thử lại.',
             ], 422);
@@ -294,15 +292,19 @@ class LearningPlanController extends Controller
                         'role'    => 'user',
                         'content' => $enhancedPrompt,
                     ],
+                    [
+                        'role'    => 'user',
+                        'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho kế hoạch này.",
+                    ],
                 ],
             ]);
 
         if (!$planResponse->successful()) {
             return response()->json([
-                'data'    => null,
-                'status'  => 500,
-                'message' => 'AI thất bại khi tạo kế hoạch.',
-            ]);
+                'data'    => $planResponse->json(),
+                'status'  => 400,
+                'message' => 'Có lỗi xảy ra khi thực hiện tạo kế hoạch, vui lòng thử lại.',
+            ], 400);
         }
 
         $data = $planResponse->json('choices.0.message.content');
@@ -313,13 +315,16 @@ class LearningPlanController extends Controller
 
         if (!$parsed || !isset($parsed['weeklyPlan'])) {
             return response()->json([
-                'data'    => null,
-                'status'  => 500,
+                'data'    => [
+                    'errors' => null,
+                ],
+                'status'  => 400,
                 'message' => 'Kết quả không hợp lệ từ AI.',
-            ]);
+            ], 400);
         }
 
         $week = $profile->weeks()->create([
+            'user_id'    => Auth::id(),
             'summary'    => $parsed['user']['summary'] ?? '',
             'notes'      => $parsed['notes'] ?? null,
             'start_date' => now()->startOfWeek(),
@@ -336,6 +341,7 @@ class LearningPlanController extends Controller
                     'type'     => $task['type'],
                     'focus'    => $task['focus'],
                     'theory'   => $task['theory'] ?? null,
+                    'user_id'  => $week->user_id,
                     'is_done'  => false,
                 ]);
 
@@ -348,6 +354,7 @@ class LearningPlanController extends Controller
                         'score'        => $ex['score'] ?? 1,
                         'type'         => $ex['type'] ?? 'written',
                         'options'      => isset($ex['options']) ? json_encode($ex['options']) : null,
+                        'user_id'      => $taskModel->user_id,
                         'user_answer'  => null,
                         'is_submitted' => false,
                     ]);

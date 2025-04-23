@@ -20,8 +20,8 @@ class ExerciseController extends Controller
         if (!$task) {
             return response()->json([
                 'message' => 'Không tìm thấy công việc này, vui kiểm tra lại.',
-                'status'  => 404,
-            ]);
+                'status'  => 400,
+            ], 400);
         }
 
         $exercises = LearningTaskExercise::where('learning_task_id', $task->id)->get();
@@ -50,9 +50,9 @@ class ExerciseController extends Controller
 
         if ($exercise->is_submitted) {
             return response()->json([
-                'message' => 'Câu hỏi này đã được nộp trước đó.',
+                'message' => 'Câu hỏi này đã được nộp trước đó, làm câu khác nhé.',
                 'status'  => 400,
-            ]);
+            ], 400);
         }
 
         $exercise->end_time = now();
@@ -177,9 +177,9 @@ class ExerciseController extends Controller
 
         if (!$weekInfo) {
             return response()->json([
-                'message' => 'Không tìm thấy tuần học này.',
-                'status'  => 404,
-            ]);
+                'message' => 'Không tìm thấy tuần học này, vui lòng kiểm tra lại.',
+                'status'  => 400,
+            ], 400);
         }
 
         $tasks = $weekInfo->tasks;
@@ -260,7 +260,7 @@ class ExerciseController extends Controller
                 ],
                 'status'  => 400,
                 'message' => 'Ôi không, có lỗi xảy ra trong quá trình xử lý yêu cầu của bạn. Vui lòng thử lại sau.',
-            ], 422);
+            ], 400);
         }
 
         $data = $aiResponse->json('choices.0.message.content');
