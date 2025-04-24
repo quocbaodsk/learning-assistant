@@ -34,6 +34,8 @@ class LearningTaskExercise extends Model
 
     'score'      => 'integer',
     'difficulty' => 'integer',
+
+    'options'    => 'array',
   ];
 
   protected $appends = [
