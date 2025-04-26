@@ -43,9 +43,8 @@ class LearningTaskExercise extends Model
   ];
 
   protected $hidden = [
-    'answer',
+    // 'answer',
     'ai_answer',
-    'instructions',
     'ai_evaluation',
     // 'ai_explanation',
   ];

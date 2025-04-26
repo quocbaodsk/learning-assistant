@@ -39,6 +39,26 @@ class ExerciseController extends Controller
     ]);
   }
 
+  public function indexByWeek(Request $request, $weekId)
+  {
+    $week = LearningWeek::where('id', $weekId)->where('user_id', Auth::id())->first();
+
+    if (!$week) {
+      return response()->json([
+        'message' => 'Không tìm thấy tuần học này, vui kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
+    }
+
+    $exercises = LearningTaskExercise::whereIn('learning_task_id', $week->tasks->pluck('id'))->get();
+
+    return response()->json([
+      'data'    => $exercises,
+      'status'  => 200,
+      'message' => 'Lấy danh sách bài tập thành công.',
+    ]);
+  }
+
   public function submit(Request $request)
   {
     $payload = $request->validate([
@@ -46,7 +66,31 @@ class ExerciseController extends Controller
       'user_answer' => 'required|string',
     ]);
 
-    $exercise = LearningTaskExercise::find($payload['id']);
+    $exercise = LearningTaskExercise::where('id', $payload['id'])->where('user_id', Auth::id())->first();
+
+    if (!$exercise) {
+      return response()->json([
+        'message' => 'Không tìm thấy bài tập này, vui lòng kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
+    }
+
+    $task = LearningTask::where('id', $exercise->learning_task_id)->where('user_id', Auth::id())->first();
+
+    if (!$task) {
+      return response()->json([
+        'message' => 'Không tìm thấy công việc này, vui kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
+    }
+    $profile = LearningWeek::where('id', $task->learning_week_id)->first();
+
+    if (!$profile) {
+      return response()->json([
+        'message' => 'Không tìm thấy hồ sơ này, vui lòng kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
+    }
 
     if ($exercise->is_submitted) {
       return response()->json([
@@ -111,6 +155,7 @@ class ExerciseController extends Controller
           'D' => 3,
         ][$userAnswer];
         $userAnswer   = $exercise->options[$userSelected] ?? false;
+        // $userAnswer   = str_replace(['A. ', 'B. ', 'C. ', 'D. '], '', $userAnswer);
       }
       // Nếu là tự luận → hỏi AI để đánh giá tương đối
       $content = file_get_contents(storage_path('app/prompts/task-exercise-task.txt'));
@@ -123,17 +168,16 @@ class ExerciseController extends Controller
       // $prompts = "Question: {$exercise->exercise}\nAnswer: {$exercise->answer}\nUser's Answer: {$userAnswer}\n\nIs the user's answer correct? Answer yes or no and explain why. Give a score from 0 to {{ $exercise->score }} based on completeness and correctness.";
 
 
-      $aiResponse = Http::timeout(120)->withToken(config('services.openai.key'))
+      $aiResponse = Http::timeout(180)->withToken(config('services.openai.key'))
         ->post(config('services.openai.url'), [
           'top_p'       => 1,
           'model'       => config('services.openai.model'),
           'temperature' => (double) config('services.openai.temperature'),
           'messages'    => [
-            // ['role' => 'system', 'content' => 'You are an evaluator for short written answers.'],
             ['role' => 'user', 'content' => $prompts],
             [
               'role'    => 'user',
-              'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho phần này."
+              'content' => "IMPORTANT: Using language: " . ($profile->language ?? 'Vietnamese') . " for this content."
             ],
           ],
         ]);
@@ -171,10 +215,10 @@ class ExerciseController extends Controller
       $ai_evaluation  = $parsed['ai_evaluation'] ?? '';
       $ai_explanation = $parsed['ai_explanation'] ?? '';
 
-
-      $exercise->ai_answer  = $ai_answer;
-      $exercise->is_correct = $is_correct;
-      $exercise->user_score = $user_score;
+      $exercise->ai_answer   = $ai_answer;
+      $exercise->is_correct  = $is_correct;
+      $exercise->user_score  = $user_score;
+      $exercise->user_answer = $userAnswer;
 
       $exercise->ai_feedback    = $ai_feedback;
       $exercise->ai_evaluation  = $ai_evaluation;
@@ -274,20 +318,16 @@ class ExerciseController extends Controller
         $buildPrompts .= "- Đánh giá của AI: {$exercise['ai_feedback']}\n";
       }
     }
-    $buildPrompts .= "Sử dụng ngôn ngữ: " . ($weekInfo->profile->user->language ?? 'VN') . " cho phần này.\n";
+    $buildPrompts .= "Sử dụng ngôn ngữ: " . ($weekInfo->profile->user->language ?? 'Vietnamese') . " cho phần này.\n";
 
 
-    $aiResponse = Http::timeout(120)->withToken(config('services.openai.key'))
+    $aiResponse = Http::timeout(180)->withToken(config('services.openai.key'))
       ->post(config('services.openai.url'), [
         'top_p'       => 1,
         'model'       => config('services.openai.model'),
         'temperature' => (double) config('services.openai.temperature'),
         'messages'    => [
           ['role' => 'system', 'content' => $content],
-          [
-            'role'    => 'user',
-            'content' => "Sử dụng ngôn ngữ: " . ($profile->user->language ?? 'VN') . " cho phần này."
-          ],
         ],
       ]);
 
@@ -308,6 +348,5 @@ class ExerciseController extends Controller
     $data = str_replace('```', '', $data);
 
     return $parsed = json_decode($data, true);
-
   }
 }

@@ -7,7 +7,7 @@ Route::get('/user', function (Request $request) {
   return $request->user();
 })->middleware('auth:sanctum');
 
-Route::prefix('/account')->group(function () {
+Route::middleware('auth:sanctum')->prefix('/account')->group(function () {
   Route::patch('/update-info', [App\Http\Controllers\Api\AccountController::class, 'updateInfo']);
   Route::patch('/update-password', [App\Http\Controllers\Api\AccountController::class, 'updatePassword']);
 });
@@ -57,6 +57,7 @@ Route::middleware('auth:sanctum')->prefix('/v1')->group(function () {
 
   Route::prefix('/exercises')->group(function () {
     Route::get('/{taskId}', [App\Http\Controllers\Api\ExerciseController::class, 'index'])->where('taskId', '[0-9]+');
+    Route::get('/by-week/{weekId}', [App\Http\Controllers\Api\ExerciseController::class, 'indexByWeek'])->where('weekId', '[0-9]+');
     Route::post('/submit', [App\Http\Controllers\Api\ExerciseController::class, 'submit']);
     Route::post('/summary', [App\Http\Controllers\Api\ExerciseController::class, 'summary']);
   });
