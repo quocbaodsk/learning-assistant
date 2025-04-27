@@ -92,6 +92,13 @@ class ExerciseController extends Controller
       ], 400);
     }
 
+    if (!$profile->is_active) {
+      return response()->json([
+        'status'  => 400,
+        'message' => 'Hồ sơ này đã bị khóa, vui lòng kiểm tra lại.',
+      ], 400);
+    }
+
     if ($exercise->is_submitted) {
       return response()->json([
         'message' => 'Câu hỏi này đã được nộp trước đó, làm câu khác nhé.',
@@ -169,11 +176,11 @@ class ExerciseController extends Controller
       // $prompts = "Question: {$exercise->exercise}\nAnswer: {$exercise->answer}\nUser's Answer: {$userAnswer}\n\nIs the user's answer correct? Answer yes or no and explain why. Give a score from 0 to {{ $exercise->score }} based on completeness and correctness.";
 
 
-      $aiResponse = Http::timeout(180)->withToken(config('services.openai.key'))
-        ->post(config('services.openai.url'), [
+      $aiResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))
+        ->post(config('services.deepseek.url'), [
           'top_p'       => 1,
-          'model'       => config('services.openai.model'),
-          'temperature' => (double) config('services.openai.temperature'),
+          'model'       => config('services.deepseek.model'),
+          'temperature' => (double) config('services.deepseek.temperature'),
           'messages'    => [
             ['role' => 'user', 'content' => $prompts],
             [
@@ -314,11 +321,11 @@ class ExerciseController extends Controller
 
     $prompts = $content . "\n\nAnalyze the following JSON:\n" . json_encode($inputData);
 
-    $aiResponse = Http::timeout(180)->withToken(config('services.openai.key'))
-      ->post(config('services.openai.url'), [
+    $aiResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))
+      ->post(config('services.deepseek.url'), [
         'top_p'       => 1,
-        'model'       => config('services.openai.model'),
-        'temperature' => (double) config('services.openai.temperature'),
+        'model'       => config('services.deepseek.model'),
+        'temperature' => (double) config('services.deepseek.temperature'),
         'messages'    => [
           ['role' => 'user', 'content' => $prompts],
           [

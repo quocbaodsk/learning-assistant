@@ -370,8 +370,8 @@ class LearningPlanController extends Controller
       if (!$feedback) {
         $summaryPrompt = file_get_contents(storage_path('app/prompts/task-exercise-summary.txt')) . "\n\n" . json_encode($analyzeData);
 
-        $summaryResponse = Http::timeout(180)->withToken(config('services.openai.key'))->post(config('services.openai.url'), [
-          'model'    => config('services.openai.model'),
+        $summaryResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))->post(config('services.deepseek.url'), [
+          'model'    => config('services.deepseek.model'),
           'messages' => [
             ['role' => 'system', 'content' => $summaryPrompt],
             ['role' => 'user', 'content' => 'Use ' . ($profile->language ?? 'English')],
@@ -411,8 +411,8 @@ class LearningPlanController extends Controller
       $enhancedPrompt = collect($userInfo)->map(fn($v, $k) => "$k: $v")->implode("\n") . "\n\nIMPORTANT:\n1. RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . ".\n2. STRICTLY FOLLOW SKILL LEVEL.\n3. BUILD BASED ON LAST WEEK'S PERFORMANCE.\n4. REINFORCE WEAK AREAS.\n\nAnalysis:\n" . json_encode($feedback);
 
       // Gọi AI sinh tuần mới
-      $planResponse = Http::timeout(180)->withToken(config('services.openai.key'))->post(config('services.openai.url'), [
-        'model'    => config('services.openai.model'),
+      $planResponse = Http::timeout(180)->withToken(config('services.claude.key'))->post(config('services.claude.url'), [
+        'model'    => config('services.claude.model'),
         'messages' => [
           ['role' => 'system', 'content' => file_get_contents(storage_path('app/prompts/learning-plan-next.txt'))],
           ['role' => 'user', 'content' => $enhancedPrompt],
