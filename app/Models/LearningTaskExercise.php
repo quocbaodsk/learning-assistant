@@ -38,12 +38,8 @@ class LearningTaskExercise extends Model
     'options'    => 'array',
   ];
 
-  protected $appends = [
-    'duration',
-  ];
-
   protected $hidden = [
-    // 'answer',
+    'answer',
     'ai_answer',
     'ai_evaluation',
     // 'ai_explanation',
@@ -53,15 +49,4 @@ class LearningTaskExercise extends Model
   {
     return $this->belongsTo(LearningTask::class, 'learning_task_id');
   }
-
-  // tính thời gian hoàn thành
-  public function getDurationAttribute()
-  {
-    if ($this->is_sumitted && $this->end_time && $this->start_time) {
-      return $this->end_time->diffInMinutes($this->start_time);
-    }
-
-    return 0;
-  }
-
 }

@@ -113,6 +113,7 @@ class ExerciseController extends Controller
 
     // Nếu là trắc nghiệm → so sánh trực tiếp
     if ($exercise->type === 'multiple_choice' && 1 === 0) {
+      // cho phép chọn nhiều đáp án
       if (!in_array($userAnswer, ['A', 'B', 'C', 'D'])) {
         return response()->json([
           'message' => 'Câu trả lời không hợp lệ, vui lòng chọn A, B, C hoặc D.',
@@ -210,7 +211,7 @@ class ExerciseController extends Controller
 
       $ai_answer      = $parsed['ai_answer'] ?? '';
       $is_correct     = $parsed['is_correct'] ?? false;
-      $user_score     = $parsed['score'] ?? 0;
+      $user_score     = $parsed['user_score'] ?? 0;
       $ai_feedback    = $parsed['ai_feedback'] ?? '';
       $ai_evaluation  = $parsed['ai_evaluation'] ?? '';
       $ai_explanation = $parsed['ai_explanation'] ?? '';
@@ -254,9 +255,7 @@ class ExerciseController extends Controller
       'week_id' => 'required|integer|exists:learning_weeks,id',
     ]);
 
-    $weekId = $payload['week_id'];
-
-    $weekInfo = LearningWeek::where('id', $weekId)->first();
+    $weekInfo = LearningWeek::with(['tasks.exercises'])->find($payload['week_id']);
 
     if (!$weekInfo) {
       return response()->json([
@@ -265,14 +264,14 @@ class ExerciseController extends Controller
       ], 400);
     }
 
-    $tasks = $weekInfo->tasks;
-
-    $tasks = $tasks->map(function ($task) {
+    $tasks = $weekInfo->tasks->map(function ($task) {
       return [
-        'id'          => $task->id,
-        'title'       => $task->title,
-        'description' => $task->description,
-        'exercises'   => $task->exercises->makeHidden(['answer'])->map(function ($exercise) {
+        'id'        => $task->id,
+        'title'     => $task->title,
+        'focus'     => $task->focus,
+        'type'      => $task->type,
+        'theory'    => $task->theory,
+        'exercises' => $task->exercises->map(function ($exercise) {
           return [
             'id'           => $exercise->id,
             'exercise'     => $exercise->exercise,
@@ -288,8 +287,7 @@ class ExerciseController extends Controller
       ];
     });
 
-    // check xem đã làm hết chưa, nếu chưa thì không cho tóm tắt
-
+    // Kiểm tra hoàn thành hết bài tập chưa
     foreach ($tasks as $task) {
       foreach ($task['exercises'] as $exercise) {
         if (!$exercise['is_submitted']) {
@@ -301,25 +299,20 @@ class ExerciseController extends Controller
       }
     }
 
-    // tạo prompts từ danh sách bài tập, và gửi cho AI để tóm tắt
+    // Build dữ liệu JSON input cho AI
+    $inputData = [
+      'user_profile'    => [
+        'skill_level'    => $weekInfo->profile->skill_level ?? null,
+        'primary_skill'  => $weekInfo->profile->primary_skill ?? null,
+        'learning_style' => $weekInfo->profile->learning_style ?? null,
+        'language'       => $weekInfo->profile->language ?? 'Vietnamese',
+      ],
+      'completed_tasks' => $tasks,
+    ];
+
     $content = file_get_contents(storage_path('app/prompts/task-exercise-summary.txt'));
 
-    $buildPrompts = "";
-    $buildPrompts .= "Tuần học: {$weekInfo->title} - {$weekInfo->start_date} đến {$weekInfo->end_date}\n";
-    $buildPrompts .= "Tóm tắt bài tập:\n";
-
-    foreach ($tasks as $task) {
-      $buildPrompts .= "Bài tập #" . $task['id'] . ": {$task['title']}\n";
-      foreach ($task['exercises'] as $exercise) {
-        $buildPrompts .= "- Câu hỏi: {$exercise['exercise']}\n";
-        $buildPrompts .= "- Đáp án: {$exercise['answer']}\n";
-        $buildPrompts .= "- Điểm tối đa: {$exercise['score']}\n";
-        $buildPrompts .= "- Điểm của bạn: {$exercise['user_score']}\n";
-        $buildPrompts .= "- Đánh giá của AI: {$exercise['ai_feedback']}\n";
-      }
-    }
-    $buildPrompts .= "Sử dụng ngôn ngữ: " . ($weekInfo->profile->user->language ?? 'Vietnamese') . " cho phần này.\n";
-
+    $prompts = $content . "\n\nAnalyze the following JSON:\n" . json_encode($inputData);
 
     $aiResponse = Http::timeout(180)->withToken(config('services.openai.key'))
       ->post(config('services.openai.url'), [
@@ -327,10 +320,13 @@ class ExerciseController extends Controller
         'model'       => config('services.openai.model'),
         'temperature' => (double) config('services.openai.temperature'),
         'messages'    => [
-          ['role' => 'system', 'content' => $content],
+          ['role' => 'user', 'content' => $prompts],
+          [
+            'role'    => 'user',
+            'content' => "IMPORTANT: Using language: " . ($weekInfo->profile->language ?? 'Vietnamese') . " for this content."
+          ],
         ],
       ]);
-
 
     if (!$aiResponse->successful()) {
       return response()->json([
@@ -347,6 +343,20 @@ class ExerciseController extends Controller
     $data = str_replace('```json', '', $data);
     $data = str_replace('```', '', $data);
 
-    return $parsed = json_decode($data, true);
+    $parsed = json_decode($data, true);
+
+    if (!$parsed || !isset($parsed['performance_summary'])) {
+      return response()->json([
+        'status'  => 400,
+        'message' => 'Dữ liệu phản hồi từ AI không hợp lệ.',
+      ], 400);
+    }
+
+    return response()->json([
+      'data'    => $parsed,
+      'status'  => 200,
+      'message' => 'Tóm tắt tuần học thành công.',
+    ]);
   }
+
 }

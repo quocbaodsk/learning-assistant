@@ -14,6 +14,7 @@ return new class extends Migration {
       $table->id();
       $table->foreignId('user_id')->constrained()->onDelete('cascade');
       $table->string('course_name')->nullable(); // e.g., "Web Development"
+      $table->json('course_content')->nullable(); // e.g., ["HTML", "CSS", "JavaScript"]
       $table->json('interests')->nullable();
       $table->string('primary_skill');
       $table->unsignedTinyInteger('skill_level'); // 0–100

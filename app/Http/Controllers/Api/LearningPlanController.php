@@ -30,6 +30,8 @@ class LearningPlanController extends Controller
   {
     $validated = $request->validate([
       'course_name'         => 'required|string|max:255',
+      'course_content'      => 'required|array',
+      'course_content.*'    => 'string|max:255',
       'primary_skill'       => 'required|string',
       'skill_level'         => 'required|integer|min:0|max:100',
       'secondary_skills'    => 'array',
@@ -42,9 +44,19 @@ class LearningPlanController extends Controller
       'custom_ai_prompt'    => 'nullable|string',
     ]);
 
-    $allowedCourses = [];
+    $allowedCourses = [
+      "Hệ điều hành",
+      "Lập trình C++",
+      "Cơ sở dữ liệu",
+      "Mạng máy tính",
+      "Lập trình web",
+      "Công nghệ .NET",
+      "Lập trình Java",
+      "Vật lý đại cương",
+      "Cơ sở dữ liệu nâng cao",
+    ];
 
-    if (!in_array($allowedCourses, $validated['course_name'])) {
+    if (!in_array($validated['course_name'], $allowedCourses)) {
       return response()->json(['status' => 400, 'message' => 'Course name is not allowed.'], 400);
     }
 
@@ -136,6 +148,7 @@ class LearningPlanController extends Controller
         "Interests"           => implode(', ', $profile->interests ?? []),
         "Occupation"          => ($profile->user->occupation ?? '-'),
         "Course Name"         => ($profile->course_name ?? '-'),
+        "Course Content"      => json_encode($profile->course_content ?? []),
         "Primary Skill"       => $profile->primary_skill,
         "Skill Level"         => $profile->skill_level,
         "Secondary Skills"    => implode(', ', $profile->secondary_skills ?? []),
@@ -151,8 +164,8 @@ class LearningPlanController extends Controller
         $prompt .= "$key: $value\n";
       }
 
-      // Thêm hướng dẫn quan trọng về ngôn ngữ phản hồi
-      $prompt .= "\nIMPORTANT: RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . " LANGUAGE.\n";
+      // Gợi ý trả lời
+      $prompt .= "IMPORTANT: RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . " LANGUAGE.";
 
       // Chèn prompt vào template
       $content = str_replace('{{USER_PROFILE}}', $prompt, $content);
@@ -290,54 +303,43 @@ class LearningPlanController extends Controller
     }
   }
 
-  /**
-   * Tạo kế hoạch học tập tuần tiếp theo dựa trên phân tích kết quả bài tập của tuần gần nhất
-   *
-   * @param Request $request
-   * @return \Illuminate\Http\JsonResponse
-   */
+
   public function generateNextWeekFromPrevious(Request $request)
   {
     try {
-      // Xác thực dữ liệu đầu vào
       $payload = $request->validate([
         'profile_id' => 'required|integer|exists:learning_profiles,id',
       ]);
 
-      $profile = LearningProfile::where('user_id', Auth::id())->find($payload['profile_id']);
+      $profile = LearningProfile::where('user_id', Auth::id())->findOrFail($payload['profile_id']);
 
-      if (!$profile) {
-        return response()->json(['status' => 422, 'message' => 'Không tìm thấy hồ sơ này, vui lòng thử lại.'], 422);
-      }
-
-      // Kiểm tra tuần học trước đó
       $lastWeek = $profile->weeks()->latest('start_date')->first();
+
       if (!$lastWeek) {
-        return response()->json([
-          'status'  => 400,
-          'message' => 'Chưa có tuần học trước đó, vui lòng tạo lại tuần học.',
-          'data'    => null,
-        ], 400);
+        return response()->json(['status' => 400, 'message' => 'Chưa có tuần học trước, vui lòng tạo mới.'], 400);
       }
 
-      // Kiểm tra trạng thái hoàn thành tuần học hiện tại
       if ($lastWeek->is_active || $lastWeek->tasks()->where('is_done', false)->exists()) {
-        return response()->json([
-          'status'  => 400,
-          'message' => 'Cần hoàn thành toàn bộ tuần hiện tại trước khi tạo tuần tiếp theo.',
-          'data'    => null,
-        ], 400);
+        return response()->json(['status' => 400, 'message' => 'Bạn cần hoàn thành tuần học hiện tại trước.'], 400);
       }
 
-      // Cập nhật trạng thái tuần hiện tại
       $lastWeek->update(['is_active' => false]);
 
-      // Thu thập bài tập CHỈ từ tuần gần nhất
-      $exercises = $lastWeek->tasks()
-        ->with(['exercises' => fn($q) => $q->where('is_submitted', true)])
+      // Lấy bài tập đã nộp
+      $submittedExercises = $lastWeek->tasks()
+        ->with('exercises')
         ->get()
-        ->flatMap(fn($t) => $t->exercises)
-        ->map(fn($e) => [
+        ->flatMap(fn($task) => $task->exercises->where('is_submitted', true))
+        ->values();
+
+      if ($submittedExercises->isEmpty()) {
+        Log::info('No submitted exercises, fallback to basic generation.', ['profile_id' => $profile->id]);
+        return $this->generateWeek($request);
+      }
+
+      // Build dữ liệu phân tích
+      $analyzeData = [
+        'exercises'       => $submittedExercises->map(fn($e) => [
           'exercise'    => $e->exercise,
           'user_answer' => $e->user_answer,
           'is_correct'  => $e->is_correct,
@@ -346,111 +348,55 @@ class LearningPlanController extends Controller
           'difficulty'  => $e->difficulty,
           'score'       => $e->score,
           'type'        => $e->type,
-          'task_focus'  => $e->task->focus ?? null,
-          'task_title'  => $e->task->task ?? null
-        ])->values()->toArray();
-
-      // Lấy thêm thông tin về các task đã hoàn thành
-      $completedTasks = $lastWeek->tasks()
-        ->where('is_done', true)
-        ->get()
-        ->map(fn($t) => [
+          'task_focus'  => $e->task->focus ?? '',
+          'task_title'  => $e->task->task ?? '',
+        ])->toArray(),
+        'completed_tasks' => $lastWeek->tasks->where('is_done', true)->map(fn($t) => [
           'title'  => $t->task,
           'focus'  => $t->focus,
           'type'   => $t->type,
           'theory' => $t->theory,
-        ])->values()->toArray();
+        ])->toArray(),
+        'skill_level'     => $profile->skill_level,
+        'primary_skill'   => $profile->primary_skill,
+        'language'        => $profile->language ?? 'English',
+        'week_summary'    => $lastWeek->summary ?? '',
+        'learning_goals'  => $profile->goals ?? '',
+        'learning_style'  => $profile->learning_style ?? '',
+      ];
 
-      // Nếu không có bài tập nào, sử dụng phương thức tạo tuần đầu tiên thay thế
-      if (empty($exercises)) {
-        Log::info('No submitted exercises found in last week, falling back to basic week generation', [
-          'profile_id'   => $profile->id,
-          'last_week_id' => $lastWeek->id,
+      // Nếu chưa có feedback, gọi AI phân tích
+      $feedback = $lastWeek->feedback;
+      if (!$feedback) {
+        $summaryPrompt = file_get_contents(storage_path('app/prompts/task-exercise-summary.txt')) . "\n\n" . json_encode($analyzeData);
+
+        $summaryResponse = Http::timeout(180)->withToken(config('services.openai.key'))->post(config('services.openai.url'), [
+          'model'    => config('services.openai.model'),
+          'messages' => [
+            ['role' => 'system', 'content' => $summaryPrompt],
+            ['role' => 'user', 'content' => 'Use ' . ($profile->language ?? 'English')],
+          ],
         ]);
-
-        // Tạo tuần mới không dựa trên phân tích bài tập
-        return $this->generateWeek($request);
-      }
-
-
-      if ($lastWeek->feedback !== null) {
-        $feedback = $lastWeek->feedback;
-      } else {
-        // Phân tích kết quả bài tập
-        $analyzeData = [
-          'exercises'       => $exercises,
-          'completed_tasks' => $completedTasks,
-          'skill_level'     => $profile->skill_level,
-          'primary_skill'   => $profile->primary_skill,
-          'language'        => $profile->language ?? 'English',
-          'week_summary'    => $lastWeek->summary ?? '',
-          'week_notes'      => $lastWeek->notes ?? '',
-          'learning_goals'  => $profile->goals ?? '',
-          'learning_style'  => $profile->learning_style ?? ''
-        ];
-
-        // Gọi API phân tích bài tập
-        $summaryResponse = Http::timeout(360)
-          ->withToken(config('services.openai.key'))
-          ->post(config('services.openai.url'), [
-            'top_p'       => 1,
-            'model'       => config('services.openai.model'),
-            'temperature' => (double) config('services.openai.temperature'),
-            'messages'    => [
-              [
-                'role'    => 'system',
-                'content' => file_get_contents(storage_path('app/prompts/task-exercise-summary.txt')),
-              ],
-              [
-                'role'    => 'user',
-                'content' => json_encode($analyzeData),
-              ],
-              [
-                'role'    => 'user',
-                'content' => 'Using language: ' . ($profile->language ?? 'English') . ' for this content',
-              ],
-            ],
-          ]);
 
         if (!$summaryResponse->successful()) {
-          Log::error('Exercise analysis API error', [
-            'status'     => $summaryResponse->status(),
-            'response'   => $summaryResponse->json(),
-            'profile_id' => $profile->id,
-          ]);
-
-          return response()->json([
-            'status'  => 400,
-            'message' => 'Lỗi khi phân tích bài tập. Vui lòng thử lại sau.',
-            'data'    => $summaryResponse->json(),
-          ], 400);
+          Log::error('Failed to summarize exercises.', ['profile_id' => $profile->id]);
+          return response()->json(['status' => 400, 'message' => 'Không thể phân tích bài tập.'], 400);
         }
 
-        // Xử lý phản hồi phân tích bài tập
-        $summaryContent = $summaryResponse->json('choices.0.message.content');
+        $summaryContent = preg_replace('/```(?:json)?\s*([\s\S]*?)\s*```/', '$1', $summaryResponse->json('choices.0.message.content'));
+        $feedback       = json_decode($summaryContent, true) ?? ['analysis' => $summaryContent];
 
-        // Làm sạch và phân tích JSON
-        $summaryJson = preg_replace('/```(?:json)?\s*([\s\S]*?)\s*```/', '$1', $summaryContent);
-        $feedback    = json_decode($summaryJson, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-          // Nếu không thể phân tích JSON, sử dụng nội dung gốc
-          $feedback = ['analysis' => $summaryContent];
-        }
-
-        $lastWeek->update([
-          'feedback' => $feedback,
-        ]);
+        $lastWeek->update(['feedback' => $feedback]);
       }
 
-      // Xây dựng prompt nâng cao với thông tin người dùng
+      // Xây prompt để sinh tuần mới
       $userInfo = [
-        "Age"                 => ($profile->user->age ?? '-'),
-        "Name"                => ($profile->user->fullname ?? 'User'),
-        "Gender"              => ($profile->user->gender ?? "Other"),
+        "Age"                 => $profile->user->age ?? '-',
+        "Name"                => $profile->user->name ?? 'User',
+        "Gender"              => $profile->user->gender ?? 'Other',
         "Interests"           => implode(', ', $profile->interests ?? []),
-        "Occupation"          => ($profile->user->occupation ?? '-'),
-        "Course Name"         => ($profile->course_name ?? '-'),
+        "Occupation"          => $profile->user->occupation ?? '-',
+        "Course Name"         => $profile->course_name ?? '-',
         "Primary Skill"       => $profile->primary_skill,
         "Skill Level"         => $profile->skill_level,
         "Secondary Skills"    => implode(', ', $profile->secondary_skills ?? []),
@@ -458,92 +404,39 @@ class LearningPlanController extends Controller
         "Learning Style"      => $profile->learning_style,
         "Daily Learning Time" => $profile->daily_learning_time,
         "Preferred Resources" => implode(', ', $profile->preferred_resources ?? []),
-        "Response Language"   => ($profile->language ?? 'English'),
-        "Last Week's Focus"   => $lastWeek->summary ?? 'No summary available'
+        "Response Language"   => $profile->language ?? 'English',
+        "Last Week's Focus"   => $lastWeek->summary ?? '-'
       ];
 
-      $enhancedPrompt = "";
-      foreach ($userInfo as $key => $value) {
-        $enhancedPrompt .= "$key: $value\n";
-      }
+      $enhancedPrompt = collect($userInfo)->map(fn($v, $k) => "$k: $v")->implode("\n") . "\n\nIMPORTANT:\n1. RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . ".\n2. STRICTLY FOLLOW SKILL LEVEL.\n3. BUILD BASED ON LAST WEEK'S PERFORMANCE.\n4. REINFORCE WEAK AREAS.\n\nAnalysis:\n" . json_encode($feedback);
 
-      // Thêm hướng dẫn quan trọng về ngôn ngữ và cấp độ
-      $enhancedPrompt .= "\nIMPORTANT INSTRUCTIONS:
-1. RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . " LANGUAGE.
-2. STRICTLY MATCH CONTENT TO THE USER'S ACTUAL SKILL LEVEL BASED ON LAST WEEK'S PERFORMANCE.
-3. BUILD DIRECTLY UPON THE TOPICS FROM LAST WEEK, INCREASING DIFFICULTY WHERE APPROPRIATE.
-4. FOCUS ON AREAS WHERE THE USER STRUGGLED IN THE PREVIOUS WEEK.
-5. FOR CONCEPTS THE USER UNDERSTOOD WELL, INTRODUCE MORE ADVANCED RELATED CONCEPTS.
-6. ACKNOWLEDGE COMPLETION OF PREVIOUS WEEK IN NOTES (DO NOT CONGRATULATE ON COMPLETING THE CURRENT WEEK).\n\n";
-
-      // Thêm phân tích từ bài tập tuần trước
-      $enhancedPrompt .= "Last Week's Analysis Summary:\n" . json_encode($feedback);
-
-      // Tạo kế hoạch tuần mới dựa trên phân tích
-      $planResponse = Http::timeout(360)
-        ->withToken(config('services.openai.key'))
-        ->post(config('services.openai.url'), [
-          'top_p'       => 1,
-          'model'       => config('services.openai.model'),
-          'temperature' => (double) config('services.openai.temperature'),
-          'messages'    => [
-            [
-              'role'    => 'system',
-              'content' => file_get_contents(storage_path('app/prompts/learning-plan-next.txt')),
-            ],
-            [
-              'role'    => 'user',
-              'content' => $enhancedPrompt,
-            ],
-          ],
-        ]);
+      // Gọi AI sinh tuần mới
+      $planResponse = Http::timeout(180)->withToken(config('services.openai.key'))->post(config('services.openai.url'), [
+        'model'    => config('services.openai.model'),
+        'messages' => [
+          ['role' => 'system', 'content' => file_get_contents(storage_path('app/prompts/learning-plan-next.txt'))],
+          ['role' => 'user', 'content' => $enhancedPrompt],
+        ],
+      ]);
 
       if (!$planResponse->successful()) {
-        Log::error('Week planning API error', [
-          'status'     => $planResponse->status(),
-          'response'   => $planResponse->json(),
-          'profile_id' => $profile->id,
-        ]);
-
-        return response()->json([
-          'status'  => 400,
-          'message' => 'Có lỗi xảy ra khi thực hiện tạo kế hoạch, vui lòng thử lại.',
-          'data'    => $planResponse->json(),
-        ], 400);
+        Log::error('Failed to generate next week.', ['profile_id' => $profile->id]);
+        return response()->json(['status' => 400, 'message' => 'Không thể tạo kế hoạch tuần mới.'], 400);
       }
 
-      // Xử lý phản hồi từ API
-      $data = $planResponse->json('choices.0.message.content');
+      $planContent = preg_replace('/```(?:json)?\s*([\s\S]*?)\s*```/', '$1', $planResponse->json('choices.0.message.content'));
+      $parsed      = json_decode($planContent, true);
 
-      // Làm sạch nội dung JSON
-      $data = preg_replace('/```(?:json)?\s*([\s\S]*?)\s*```/', '$1', $data);
-
-      // Phân tích JSON
-      $parsed = json_decode($data, true);
-
-      if (!$parsed || !isset($parsed['weeklyPlan']) || json_last_error() !== JSON_ERROR_NONE) {
-        Log::error('JSON Parsing Error', [
-          'error'          => json_last_error_msg(),
-          'content_sample' => substr($data, 0, 200) . '...',
-          'profile_id'     => $profile->id,
-        ]);
-
-        return response()->json([
-          'data'    => [
-            'errors' => null,
-          ],
-          'status'  => 400,
-          'message' => 'Kết quả không hợp lệ từ AI.',
-
-        ], 400);
+      if (!$parsed || !isset($parsed['weeklyPlan'])) {
+        return response()->json(['status' => 400, 'message' => 'Dữ liệu trả về từ AI không hợp lệ.'], 400);
       }
 
-      // Sử dụng transaction để lưu dữ liệu
+      // Lưu tuần mới
       return DB::transaction(function () use ($profile, $parsed, $feedback) {
         $week = $profile->weeks()->create([
           'user_id'    => Auth::id(),
           'summary'    => $parsed['user']['summary'] ?? '',
-          'notes'      => $parsed['notes'] ?? null,
+          'notes'      => $parsed['notes'] ?? '',
           'start_date' => now()->startOfWeek(),
           'is_active'  => true,
         ]);
@@ -562,23 +455,18 @@ class LearningPlanController extends Controller
               'is_done'  => false,
             ]);
 
-            if (isset($task['exercises']) && is_array($task['exercises'])) {
-              foreach ($task['exercises'] as $ex) {
-                $options = isset($ex['options']) ? ($ex['options']) : null;
-
-                $taskModel->exercises()->create([
-                  'exercise'     => $ex['exercise'],
-                  'instructions' => $ex['instructions'] ?? null,
-                  'answer'       => $ex['answer'] ?? null,
-                  'difficulty'   => $ex['difficulty'] ?? 1,
-                  'score'        => $ex['score'] ?? 1,
-                  'type'         => $ex['type'] ?? 'written',
-                  'options'      => $options,
-                  'user_id'      => $taskModel->user_id,
-                  'user_answer'  => null,
-                  'is_submitted' => false,
-                ]);
-              }
+            foreach ($task['exercises'] ?? [] as $exercise) {
+              $taskModel->exercises()->create([
+                'exercise'     => $exercise['exercise'],
+                'instructions' => $exercise['instructions'] ?? null,
+                'answer'       => $exercise['answer'] ?? null,
+                'difficulty'   => $exercise['difficulty'] ?? 1,
+                'score'        => $exercise['score'] ?? 1,
+                'type'         => $exercise['type'] ?? 'written',
+                'options'      => $exercise['options'] ?? null,
+                'user_id'      => $taskModel->user_id,
+                'is_submitted' => false,
+              ]);
             }
           }
         }
@@ -589,23 +477,18 @@ class LearningPlanController extends Controller
             'feedback' => $feedback,
           ],
           'status'  => 200,
-          'message' => 'Tạo tuần học tiếp theo thành công từ kết quả bài tập tuần trước.',
+          'message' => 'Tạo tuần học tiếp theo thành công.',
         ]);
       });
-    } catch (\Exception $e) {
-      Log::error('Generate Next Week Error: ' . $e->getMessage(), [
-        'profile_id' => $request->profile_id ?? null,
-        'trace'      => $e->getTraceAsString(),
-      ]);
 
-      return response()->json([
-        'status'  => 500,
-        'message' => 'Có lỗi xảy ra: ' . ($e->getMessage()),
-        'data'    => null,
-      ], 500);
+    } catch (\Exception $e) {
+      Log::error('Generate Next Week Error', [
+        'message' => $e->getMessage(),
+        'trace'   => $e->getTraceAsString(),
+      ]);
+      return response()->json(['status' => 500, 'message' => 'Đã xảy ra lỗi: ' . $e->getMessage()], 500);
     }
   }
-
 
   public function updateTaskStatus(Request $request, $taskId)
   {

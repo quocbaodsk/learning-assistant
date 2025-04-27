@@ -12,6 +12,7 @@ class LearningProfile extends Model
   protected $fillable = [
     'user_id',
     'course_name',
+    'course_content',
     'primary_skill',
     'skill_level',
     'secondary_skills',
@@ -26,6 +27,7 @@ class LearningProfile extends Model
 
   protected $casts = [
     'interests'           => 'array',
+    'course_content'      => 'array',
     'secondary_skills'    => 'array',
     'preferred_resources' => 'array',
   ];
