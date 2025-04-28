@@ -9,6 +9,7 @@ use App\Models\LearningWeek;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class ExerciseController extends Controller
 {
@@ -262,107 +263,98 @@ class ExerciseController extends Controller
       'week_id' => 'required|integer|exists:learning_weeks,id',
     ]);
 
-    $weekInfo = LearningWeek::with(['tasks.exercises'])->find($payload['week_id']);
+    $lastWeek = LearningWeek::with(['tasks.exercises'])->find($payload['week_id']);
 
-    if (!$weekInfo) {
+    if (!$lastWeek) {
       return response()->json([
         'message' => 'Không tìm thấy tuần học này, vui lòng kiểm tra lại.',
         'status'  => 400,
       ], 400);
     }
 
-    $tasks = $weekInfo->tasks->map(function ($task) {
-      return [
-        'id'        => $task->id,
-        'title'     => $task->title,
-        'focus'     => $task->focus,
-        'type'      => $task->type,
-        'theory'    => $task->theory,
-        'exercises' => $task->exercises->map(function ($exercise) {
-          return [
-            'id'           => $exercise->id,
-            'exercise'     => $exercise->exercise,
-            'answer'       => $exercise->answer,
-            'score'        => $exercise->score,
-            'user_answer'  => $exercise->user_answer,
-            'is_submitted' => $exercise->is_submitted,
-            'is_correct'   => $exercise->is_correct,
-            'user_score'   => $exercise->user_score,
-            'ai_feedback'  => $exercise->ai_feedback,
-          ];
-        }),
-      ];
-    });
+    $profile = $lastWeek->profile;
 
-    // Kiểm tra hoàn thành hết bài tập chưa
-    foreach ($tasks as $task) {
-      foreach ($task['exercises'] as $exercise) {
-        if (!$exercise['is_submitted']) {
-          return response()->json([
-            'status'  => 400,
-            'message' => 'Bạn chưa hoàn thành tất cả các bài tập trong tuần này.',
-          ], 400);
-        }
-      }
+    if (!$profile) {
+      return response()->json([
+        'message' => 'Không tìm thấy hồ sơ này, vui lòng kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
     }
 
-    // Build dữ liệu JSON input cho AI
-    $inputData = [
-      'user_profile'    => [
-        'skill_level'    => $weekInfo->profile->skill_level ?? null,
-        'primary_skill'  => $weekInfo->profile->primary_skill ?? null,
-        'learning_style' => $weekInfo->profile->learning_style ?? null,
-        'language'       => $weekInfo->profile->language ?? 'Vietnamese',
-      ],
-      'completed_tasks' => $tasks,
+    if ($lastWeek->tasks()->where('is_done', false)->exists()) {
+      return response()->json(['status' => 400, 'message' => 'Bạn cần hoàn thành tất cả bài tập được giao trước khi phân tích.'], 400);
+    }
+
+    $submittedExercises = $lastWeek->tasks()
+      ->with('exercises')
+      ->get()
+      ->flatMap(fn($task) => $task->exercises->where('is_submitted', true))
+      ->values();
+
+    if ($submittedExercises->isEmpty()) {
+      return response()->json([
+        'message' => 'Không tìm thấy bài tập nào đã nộp, vui lòng kiểm tra lại.',
+        'status'  => 400,
+      ], 400);
+    }
+
+    $analyzeData = [
+      'exercises'       => $submittedExercises->map(fn($e) => [
+        'exercise'    => $e->exercise,
+        'user_answer' => $e->user_answer,
+        'is_correct'  => $e->is_correct,
+        'user_score'  => $e->user_score,
+        'ai_feedback' => $e->ai_feedback,
+        'difficulty'  => $e->difficulty,
+        'score'       => $e->score,
+        'type'        => $e->type,
+        'task_focus'  => $e->task->focus ?? '',
+        'task_title'  => $e->task->task ?? '',
+      ])->toArray(),
+      'completed_tasks' => $lastWeek->tasks->where('is_done', true)->map(fn($t) => [
+        'title'  => $t->task,
+        'focus'  => $t->focus,
+        'type'   => $t->type,
+        'theory' => $t->theory,
+      ])->toArray(),
+      'skill_level'     => $profile->skill_level,
+      'primary_skill'   => $profile->primary_skill,
+      'language'        => $profile->language ?? 'English',
+      'week_summary'    => $lastWeek->summary ?? '',
+      'learning_goals'  => $profile->goals ?? '',
+      'learning_style'  => $profile->learning_style ?? '',
     ];
 
-    $content = file_get_contents(storage_path('app/prompts/task-exercise-summary.txt'));
+    $feedback = $lastWeek->feedback;
+    if (!$feedback) {
+      $summaryPrompt = file_get_contents(storage_path('app/prompts/task-exercise-summary.txt')) . "\n\n" . json_encode($analyzeData);
 
-    $prompts = $content . "\n\nAnalyze the following JSON:\n" . json_encode($inputData);
-
-    $aiResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))
-      ->post(config('services.deepseek.url'), [
-        'top_p'       => 1,
-        'model'       => config('services.deepseek.model'),
-        'temperature' => (double) config('services.deepseek.temperature'),
-        'messages'    => [
-          ['role' => 'user', 'content' => $prompts],
-          [
-            'role'    => 'user',
-            'content' => "IMPORTANT: Using language: " . ($weekInfo->profile->language ?? 'Vietnamese') . " for this content."
-          ],
+      $summaryResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))->post(config('services.deepseek.url'), [
+        'model'    => config('services.deepseek.model'),
+        'messages' => [
+          ['role' => 'system', 'content' => $summaryPrompt],
+          ['role' => 'user', 'content' => 'Use ' . ($profile->language ?? 'English')],
         ],
       ]);
 
-    if (!$aiResponse->successful()) {
-      return response()->json([
-        'data'    => [
-          'error' => $aiResponse->json('error.message'),
-        ],
-        'status'  => 400,
-        'message' => 'Ôi không, có lỗi xảy ra trong quá trình xử lý yêu cầu của bạn. Vui lòng thử lại sau.',
-      ], 400);
-    }
+      if (!$summaryResponse->successful()) {
+        Log::error('Failed to summarize exercises.', ['profile_id' => $profile->id]);
+        return response()->json(['status' => 400, 'message' => 'Không thể phân tích bài tập.'], 400);
+      }
 
-    $data = $aiResponse->json('choices.0.message.content');
+      $summaryContent = preg_replace('/```(?:json)?\s*([\s\S]*?)\s*```/', '$1', $summaryResponse->json('choices.0.message.content'));
+      $feedback       = json_decode($summaryContent, true) ?? ['analysis' => $summaryContent];
 
-    $data = str_replace('```json', '', $data);
-    $data = str_replace('```', '', $data);
-
-    $parsed = json_decode($data, true);
-
-    if (!$parsed || !isset($parsed['performance_summary'])) {
-      return response()->json([
-        'status'  => 400,
-        'message' => 'Dữ liệu phản hồi từ AI không hợp lệ.',
-      ], 400);
+      $lastWeek->update(['feedback' => $feedback]);
     }
 
     return response()->json([
-      'data'    => $parsed,
+      'data'    => [
+        'feedback' => $feedback,
+        'summary'  => $analyzeData,
+      ],
       'status'  => 200,
-      'message' => 'Tóm tắt tuần học thành công.',
+      'message' => 'Đã tiến hành phân tích dữ liệu bài tập thành công.',
     ]);
   }
 

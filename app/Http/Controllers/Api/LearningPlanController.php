@@ -15,7 +15,6 @@ use Illuminate\Support\Facades\Mail;
 
 class LearningPlanController extends Controller
 {
-  // 1. Lấy danh sách profile của người dùng
   public function getProfiles(Request $request)
   {
     return response()->json([
@@ -25,7 +24,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-  // 1b. Tạo mới learning profile
   public function createProfile(Request $request)
   {
     $validated = $request->validate([
@@ -84,12 +82,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-  /**
-   * Tạo kế hoạch học tập hàng tuần mới dựa trên hồ sơ học tập
-   *
-   * @param Request $request
-   * @return \Illuminate\Http\JsonResponse
-   */
   public function generateWeek(Request $request)
   {
     try {
@@ -184,10 +176,10 @@ class LearningPlanController extends Controller
 
       // Gọi OpenAI API
       $response = Http::timeout(360) // Tăng timeout vì việc tạo nội dung có thể mất thời gian
-        ->withToken(config('services.openai.key'))
-        ->post(config('services.openai.url'), [
-          'model'       => config('services.openai.model'),
-          'temperature' => (double) config('services.openai.temperature'),
+        ->withToken(config('services.deepseek.key'))
+        ->post(config('services.deepseek.url'), [
+          'model'       => config('services.deepseek.model'),
+          'temperature' => (double) config('services.deepseek.temperature'),
           'top_p'       => 1,
           'messages'    => $messages,
           'user'        => "profile_{$profile->id}_{$profile->user_id}",  // Thêm user ID để theo dõi request
@@ -303,7 +295,6 @@ class LearningPlanController extends Controller
     }
   }
 
-
   public function generateNextWeekFromPrevious(Request $request)
   {
     try {
@@ -411,8 +402,8 @@ class LearningPlanController extends Controller
       $enhancedPrompt = collect($userInfo)->map(fn($v, $k) => "$k: $v")->implode("\n") . "\n\nIMPORTANT:\n1. RESPOND ONLY IN " . strtoupper($profile->language ?? 'English') . ".\n2. STRICTLY FOLLOW SKILL LEVEL.\n3. BUILD BASED ON LAST WEEK'S PERFORMANCE.\n4. REINFORCE WEAK AREAS.\n\nAnalysis:\n" . json_encode($feedback);
 
       // Gọi AI sinh tuần mới
-      $planResponse = Http::timeout(180)->withToken(config('services.claude.key'))->post(config('services.claude.url'), [
-        'model'    => config('services.claude.model'),
+      $planResponse = Http::timeout(180)->withToken(config('services.deepseek.key'))->post(config('services.deepseek.url'), [
+        'model'    => config('services.deepseek.model'),
         'messages' => [
           ['role' => 'system', 'content' => file_get_contents(storage_path('app/prompts/learning-plan-next.txt'))],
           ['role' => 'user', 'content' => $enhancedPrompt],
@@ -607,7 +598,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-  // 4. Danh sách task theo tuần hiện tại
   public function getGroupedTasksOfWeek(Request $request, $weekId)
   {
     $week = LearningWeek::whereHas('profile', fn($q) => $q->where('user_id', Auth::id()))
@@ -629,7 +619,9 @@ class LearningPlanController extends Controller
       ]);
     }
 
-    $grouped = $week->tasks->groupBy('day');
+    $tasks = $week->tasks()->with('exercises')->get();
+
+    $grouped = $tasks->groupBy('day');
 
     return response()->json([
       'data'    => [
@@ -659,7 +651,9 @@ class LearningPlanController extends Controller
       ]);
     }
 
-    $grouped = $week->tasks->groupBy('day');
+    $tasks = $week->tasks()->with('exercises')->get();
+
+    $grouped = $tasks->groupBy('day');
 
     return response()->json([
       'data'    => [
@@ -671,8 +665,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-
-  // Helper để chuyển profile thành prompt ngữ cảnh
   public function buildUserPrompt($profile): string
   {
     // Build user profile information
@@ -705,7 +697,6 @@ class LearningPlanController extends Controller
     return $output;
   }
 
-  // 7. Lịch sử tất cả các tuần của profile
   public function getWeekHistory(Request $request)
   {
     $payload = $request->validate([
@@ -729,7 +720,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-  // 8. Export kế hoạch tuần thành PDF
   public function exportWeekPdf(Request $request)
   {
     $payload = $request->validate([
@@ -749,7 +739,6 @@ class LearningPlanController extends Controller
     return $pdf->download("learning-week-{$week->id}.pdf");
   }
 
-  // 8b. Gửi kế hoạch tuần PDF qua email
   public function emailWeekPdf(Request $request)
   {
     $payload = $request->validate([
@@ -780,7 +769,6 @@ class LearningPlanController extends Controller
     ]);
   }
 
-  // 9. Gợi ý kế hoạch tuần tới dựa trên tiến độ tuần trước
   public function suggestNextWeekPrompt(Request $request)
   {
     $payload = $request->validate([
