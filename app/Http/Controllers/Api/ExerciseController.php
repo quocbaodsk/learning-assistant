@@ -84,6 +84,7 @@ class ExerciseController extends Controller
         'status'  => 400,
       ], 400);
     }
+
     $profile = LearningWeek::where('id', $task->learning_week_id)->first();
 
     if (!$profile) {

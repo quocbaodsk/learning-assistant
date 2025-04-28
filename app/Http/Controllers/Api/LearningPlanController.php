@@ -641,7 +641,11 @@ class LearningPlanController extends Controller
       return response()->json(['status' => 400, 'message' => 'Không tìm thấy profile này'], 400);
     }
 
-    $week = $profile->weeks()->where('is_active', true)->latest('start_date')->with('tasks')->first();
+    $week = $profile->weeks()
+      ->where('is_active', true)
+      ->latest('start_date')
+      ->with(['tasks.exercises'])  // Eager load both tasks and exercises in one go
+      ->first();
 
     if (!$week) {
       return response()->json([
@@ -651,9 +655,7 @@ class LearningPlanController extends Controller
       ]);
     }
 
-    $tasks = $week->tasks()->with('exercises')->get();
-
-    $grouped = $tasks->groupBy('day');
+    $grouped = $week->tasks->groupBy('day');
 
     return response()->json([
       'data'    => [
